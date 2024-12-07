@@ -4,12 +4,14 @@ import socket
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # Bind the socket to the port
-server_address = '127.0.0.1'
+server_address = '0.0.0.0'  # Listen on all interfaces
+#server_address = '127.0.0.1'
+
 server_port = 10001
+#server_port = int(input('Sag mal Port: '))
 
 # Buffer size
 buffer_size = 1024
-
 message = 'Hi client! Nice to connect with you!'
 
 server_socket.bind((server_address, server_port))
