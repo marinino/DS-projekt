@@ -74,9 +74,12 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT):
             broadcast_socket.settimeout(0.5)
             data, address = broadcast_socket.recvfrom(BUFFER_SIZE)
             if data.decode().strip() == "DISCOVER_SERVER":
-                response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}"
+                ring_members.append(address)
+                response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}, {ring_members}"
                 broadcast_socket.sendto(response_message.encode(), address)
                 print(f"Broadcast-Antwort gesendet an {address}: {response_message}")
+                print('Neighbour', get_neighbour(ring_members, (f'{MY_IP}', COMMUNICATION_PORT)))
+                print(ring_members)
         except socket.timeout:
             pass
 
@@ -110,17 +113,42 @@ def passive_mode(BROADCAST_PORT):
         except socket.timeout:
             pass  # Keine Broadcast-Nachricht empfangen
 
+def get_local_ip():
+    """Ermittelt die lokale IP-Adresse des Geräts."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        # Verbindung zu einem externen Server herstellen (keine tatsächlichen Daten werden gesendet)
+        s.connect(("8.8.8.8", 80))  # Google DNS als Ziel
+        return s.getsockname()[0]
+    
+def get_neighbour(ring, current_node_ip, direction='left'):
+    current_node_index = ring.index(current_node_ip) if current_node_ip in ring else -1
+    if current_node_index != -1:
+        if direction == 'left':
+            if current_node_index + 1 == len(ring):
+                return ring[0]
+            else:
+                return ring[current_node_index + 1]
+        else:
+            if current_node_index == 0:
+                return ring[len(ring) - 1]
+            else:
+                return ring[current_node_index - 1]
+    else:
+        return None
+
 def start_server():
     """
     Startet den Server. Entscheidet zwischen aktivem und passivem Modus.
     """
     BROADCAST_PORT = 5973
     COMMUNICATION_PORT = random.randint(10000, 11000)
-
+    
    
-    MY_IP = "0.0.0.0"
+    MY_IP = get_local_ip()
 
     print(f"Server startet auf {MY_IP}...")
+
+    ring_members.append((f'{MY_IP}', COMMUNICATION_PORT))
 
     # Nach bestehendem Server suchen
     existing_server = discover_existing_server(BROADCAST_PORT)
@@ -131,5 +159,8 @@ def start_server():
         print("Kein Server gefunden. Wechsel in aktiven Modus.")
         active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT)
 
+
+
 if __name__ == '__main__':
+    ring_members = []
     start_server()
