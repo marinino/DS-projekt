@@ -2,6 +2,31 @@ import socket
 import random
 import time
 import threading
+import struct
+
+def get_broadcast_address():
+    """
+    Ermittelt die Broadcast-Adresse basierend auf der lokalen IP-Adresse und Subnetzmaske.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        # Verbindung herstellen, um die lokale IP-Adresse zu ermitteln
+        s.connect(("8.8.8.8", 80))  # Google DNS als Ziel
+        local_ip = s.getsockname()[0]
+    
+    # Beispiel-Subnetzmaske (normalerweise automatisch verfügbar, hier hartcodiert)
+    # Für echte Szenarien könntest du die Subnetzmaske auch dynamisch holen (z. B. mit `netifaces`)
+    subnet_mask = "255.255.255.0"
+    
+    # Konvertiere IP und Maske in binäre Form
+    ip_int = struct.unpack("!I", socket.inet_aton(local_ip))[0]
+    mask_int = struct.unpack("!I", socket.inet_aton(subnet_mask))[0]
+    
+    # Berechne die Broadcast-Adresse
+    broadcast_int = ip_int | ~mask_int
+    broadcast_address = socket.inet_ntoa(struct.pack("!I", broadcast_int & 0xFFFFFFFF))
+    return broadcast_address
+
+
 
 def discover_existing_server(broadcast_port=5973, timeout=2):
     """
@@ -12,7 +37,9 @@ def discover_existing_server(broadcast_port=5973, timeout=2):
     broadcast_socket.settimeout(timeout)
 
     broadcast_message = "DISCOVER_SERVER"
-    broadcast_socket.sendto(broadcast_message.encode(), ('<broadcast>', broadcast_port))
+    # Berechne die richtige Broadcast-Adresse
+    broadcast_address = get_broadcast_address()
+    broadcast_socket.sendto(broadcast_message.encode(), (broadcast_address, broadcast_port))
     print(f"Broadcast gesendet: {broadcast_message}")
 
     try:
@@ -90,10 +117,8 @@ def start_server():
     BROADCAST_PORT = 5973
     COMMUNICATION_PORT = random.randint(10000, 11000)
 
-    # Lokale IP-Adresse
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.connect(("8.8.8.8", 80))
-        MY_IP = s.getsockname()[0]
+   
+    MY_IP = "0.0.0.0"
 
     print(f"Server startet auf {MY_IP}...")
 
