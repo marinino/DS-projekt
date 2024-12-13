@@ -7,6 +7,7 @@ import re
 
 ring_members = []
 last_heartbeat = {}  # Speichert den letzten Heartbeat-Zeitstempel für jeden Nachbarn
+client_list = []
 
 def get_broadcast_address():
     """
@@ -59,7 +60,7 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
     Der Server läuft im aktiven Modus, beantwortet Broadcasts und verarbeitet direkte Nachrichten.
     """
     BUFFER_SIZE = 1024
-    global ring_members  # Greife auf die globale Variable zu
+    global ring_members, client_list  # Greife auf die globale Variable zu
 
     # Broadcast-Socket erstellen
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -87,11 +88,17 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 
                 ring_members.append(f"{address[0]}:{data.decode().split(' ')[1]}")
                 new_ring_members_message = f"RING_MEMBERS: {ring_members}"
+                client_list_message = f"CLIENT_LIST: {client_list}"
                 broadcast_socket.sendto(new_ring_members_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
+                broadcast_socket.sendto(client_list_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
             elif "DISCOVER_BY_CLIENT" in data.decode().strip():
                 response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}, {ring_members}"
                 broadcast_socket.sendto(response_message.encode(), address)
                 print(f"Broadcast-Antwort gesendet an {address}: {response_message}")
+
+                client_list.append(address)
+                client_list_message = f"CLIENT_LIST: {client_list}"
+                broadcast_socket.sendto(client_list_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
         
         except socket.timeout:
             pass
@@ -103,6 +110,8 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
             print(f"Direkte Nachricht von {address}: {data.decode()}")
             response_message = "Hello, Client!"
             server_socket.sendto(response_message.encode(), address)
+
+            
         except socket.timeout:
             pass
 
