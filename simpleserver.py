@@ -88,7 +88,11 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 ring_members.append(f"{address[0]}:{data.decode().split(' ')[1]}")
                 new_ring_members_message = f"RING_MEMBERS: {ring_members}"
                 broadcast_socket.sendto(new_ring_members_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
-                
+            elif "DISCOVER_BY_CLIENT" in data.decode().strip():
+                response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}, {ring_members}"
+                broadcast_socket.sendto(response_message.encode(), address)
+                print(f"Broadcast-Antwort gesendet an {address}: {response_message}")
+        
         except socket.timeout:
             pass
 
