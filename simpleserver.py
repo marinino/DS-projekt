@@ -82,13 +82,15 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
             broadcast_socket.settimeout(0.5)
             data, address = broadcast_socket.recvfrom(BUFFER_SIZE)
             if "DISCOVER_SERVER" in data.decode().strip():
+                ring_members.append(f"{address[0]}:{data.decode().split(' ')[1]}")
                 response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}, {ring_members}"
                 broadcast_socket.sendto(response_message.encode(), address)
                 print(f"Broadcast-Antwort gesendet an {address}: {response_message}")
                 
-                ring_members.append(f"{address[0]}:{data.decode().split(' ')[1]}")
+                
                 new_ring_members_message = f"RING_MEMBERS: {ring_members}"
                 client_list_message = f"CLIENT_LIST: {client_list}"
+                time.sleep(1)  # Warte 1 Sekunde vor dem ersten Broadcast
                 broadcast_socket.sendto(new_ring_members_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
                 broadcast_socket.sendto(client_list_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
             elif "DISCOVER_BY_CLIENT" in data.decode().strip():
@@ -140,14 +142,16 @@ def passive_mode(BROADCAST_PORT, MY_IP, COMMUNICATION_PORT, LISTENER_PORT):
         try:
             data, address = broadcast_socket.recvfrom(BUFFER_SIZE)
             print(f"Broadcast-Nachricht empfangen: {data.decode()} von {address}")
-            ring_members = data.decode()
+            broadcast_msg = data.decode()
 
-            match = re.search(r"\[.*\]", ring_members)
-            if match:
-                array_string = match.group()  # Enthält den Inhalt der eckigen Klammern als String
-                # Konvertiere den String in eine Liste
-                ring_members_array = eval(array_string)
-                ring_members = ring_members_array
+            if "RING_MEMBERS" in broadcast_msg:
+
+                match = re.search(r"\[.*\]", broadcast_msg)
+                if match:
+                    array_string = match.group()  # Enthält den Inhalt der eckigen Klammern als String
+                    # Konvertiere den String in eine Liste
+                    ring_members_array = eval(array_string)
+                    ring_members = ring_members_array
 
         except socket.timeout:
             pass  # Keine Broadcast-Nachricht empfangen
@@ -176,18 +180,21 @@ def get_local_ip():
         return s.getsockname()[0]
     
 def get_neighbour(ring, current_node_ip, direction):
-    current_node_index = ring.index(current_node_ip) if current_node_ip in ring else -1
+
+    global ring_members
+
+    current_node_index = ring_members.index(current_node_ip) if current_node_ip in ring_members else -1
     if current_node_index != -1:
         if direction == 'left':
-            if current_node_index + 1 == len(ring):
-                return ring[0]
+            if current_node_index + 1 == len(ring_members):
+                return ring_members[0]
             else:
-                return ring[current_node_index + 1]
+                return ring_members[current_node_index + 1]
         else:
             if current_node_index == 0:
-                return ring[len(ring) - 1]
+                return ring_members[len(ring) - 1]
             else:
-                return ring[current_node_index - 1]
+                return ring_members[current_node_index - 1]
     else:
         return None
 
@@ -230,6 +237,7 @@ def send_heartbeat(MY_IP, COMMUNICATION_PORT):
     while True:
         # Ermittle den Nachbarn
         neighbour = get_neighbour(ring_members, f"{MY_IP}:{COMMUNICATION_PORT}", direction='left')
+        print('NACHBAR', neighbour, 'KNOTEN', f"{MY_IP}:{COMMUNICATION_PORT}", 'RING MEMBER', ring_members)
         if neighbour:
             neighbour_ip, neighbour_port = neighbour.split(':')
             neighbour_port = int(neighbour_port) + 1

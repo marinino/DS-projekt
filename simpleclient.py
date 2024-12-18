@@ -70,20 +70,18 @@ try:
         print("No response from server. Exiting client...")
         exit()
 
-    server_ip = addr[0]
-        
-
-    match = re.search(r"SERVER_RESPONSE:\d{1,3}(?:\.\d{1,3}){3}:(\d+)", data.decode())
-    if match:
-        server_communication_port  = match.group(1)
-        print("Extrahierter Port:", server_communication_port )
-    else:
-        print("Port nicht gefunden")
-
     # Interact with the discovered server
     while True:
 
+        server_ip = addr[0]
         
+
+        match = re.search(r"SERVER_RESPONSE:\d{1,3}(?:\.\d{1,3}){3}:(\d+)", data.decode())
+        if match:
+            server_communication_port  = match.group(1)
+            print("Extrahierter Port:", server_communication_port )
+        else:
+            print("Port nicht gefunden")
         # Input message from user
         message = input('Please enter message: ')
 
@@ -107,4 +105,3 @@ try:
 finally:
     client_socket.close()
     print('Socket closed')
-
