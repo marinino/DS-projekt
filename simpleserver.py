@@ -10,6 +10,7 @@ last_heartbeat = {}  # Speichert den letzten Heartbeat-Zeitstempel für jeden Na
 client_list = []
 leader = None
 listener_thread = None
+CLIENT_BROADCAST_PORT = 5974
 
 def get_broadcast_address():
     """
@@ -62,7 +63,7 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
     Der Server läuft im aktiven Modus, beantwortet Broadcasts und verarbeitet direkte Nachrichten.
     """
     BUFFER_SIZE = 1024
-    global ring_members, client_list, leader  # Greife auf die globale Variable zu
+    global ring_members, client_list, leader, CLIENT_BROADCAST_PORT  # Greife auf die globale Variable zu
 
     # Broadcast-Socket erstellen
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -111,7 +112,7 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 
                 broadcast_socket.sendto(new_leader_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
             elif "DISCOVER_BY_CLIENT" in data.decode().strip():
-                response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}, {ring_members}"
+                response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}, {ring_members}, {BROADCAST_PORT}"
                 broadcast_socket.sendto(response_message.encode(), address)
                 print(f"Broadcast-Antwort gesendet an {address}: {response_message}")
 
@@ -129,6 +130,8 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
             print(f"Direkte Nachricht von {address}: {data.decode()}")
             response_message = "Hello, Client!"
             server_socket.sendto(response_message.encode(), address)
+
+            broadcast_socket.sendto(data, (get_broadcast_address(), CLIENT_BROADCAST_PORT))
 
             
         except socket.timeout:
@@ -226,6 +229,7 @@ def start_server():
     Startet den Server. Entscheidet zwischen aktivem und passivem Modus.
     """
     BROADCAST_PORT = 5973
+    
     COMMUNICATION_PORT = random.randint(10000, 11000)
     LISTENER_PORT = COMMUNICATION_PORT + 1            # Listener-Port
     global ring_members  # Greife auf die globale Variable zu

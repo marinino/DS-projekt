@@ -2,6 +2,7 @@ import random
 import re
 import socket
 import struct
+import threading
 
 def get_broadcast_address():
     """
@@ -49,17 +50,37 @@ def discover_existing_server(broadcast_port, communication_port, timeout=2):
         return None  # Kein Server gefunden
 
 
-# Create a UDP socket
+def listen_for_broadcast(client_broadcast_port):
+    """
+    Lauscht auf Broadcast-Nachrichten vom Netzwerk.
+    """
+    broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    broadcast_socket.bind(("", client_broadcast_port))  # Verwende einen anderen Port
+
+    print(f"Listening for broadcast messages on port {client_broadcast_port}...")
+
+    while True:
+        try:
+            data, addr = broadcast_socket.recvfrom(1024)
+            print(f"Broadcast-Nachricht von {addr}: {data.decode()}")
+        except Exception as e:
+            print(f"Fehler beim Empfangen der Broadcast-Nachricht: {e}")
+
+
+# Client setup
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-BROADCAST_PORT = 5973
+BROADCAST_PORT = 5973  # Vom Server gesendet
+CLIENT_BROADCAST_PORT = 5974  # Client lauscht auf diesem Port
 COMMUNICATION_PORT = random.randint(10000, 11000)
-
-# Buffer size
 buffer_size = 1024
-
-# Timeout for receiving response
 client_socket.settimeout(5)
+
+# Start Broadcast-Listener in einem separaten Thread
+listener_thread = threading.Thread(target=listen_for_broadcast, args=(CLIENT_BROADCAST_PORT,))
+listener_thread.daemon = True
+listener_thread.start()
 
 print("Type 'exit' to close the client.")
 
