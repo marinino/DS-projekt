@@ -8,6 +8,8 @@ import re
 ring_members = []
 last_heartbeat = {}  # Speichert den letzten Heartbeat-Zeitstempel für jeden Nachbarn
 client_list = []
+leader = None
+listener_thread = None
 
 def get_broadcast_address():
     """
@@ -60,7 +62,7 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
     Der Server läuft im aktiven Modus, beantwortet Broadcasts und verarbeitet direkte Nachrichten.
     """
     BUFFER_SIZE = 1024
-    global ring_members, client_list  # Greife auf die globale Variable zu
+    global ring_members, client_list, leader  # Greife auf die globale Variable zu
 
     # Broadcast-Socket erstellen
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -73,6 +75,18 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.bind((MY_IP, COMMUNICATION_PORT))
     print(f"Aktiver Server bereit für direkte Kommunikation auf {MY_IP}:{COMMUNICATION_PORT}")
+
+    leader = f"{MY_IP}:{COMMUNICATION_PORT}"  # Setze diesen Server als Leader
+    print(f"Ich bin der aktive Server (Leader): {leader}")
+
+    new_ring_members_message = f"RING_MEMBERS: {ring_members}"
+    client_list_message = f"CLIENT_LIST: {client_list}"
+    new_leader_message = f"NEW_LEADER: {leader}"
+    time.sleep(1)  # Warte 1 Sekunde vor dem ersten Broadcast
+    broadcast_socket.sendto(new_ring_members_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
+    broadcast_socket.sendto(client_list_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
+    
+    broadcast_socket.sendto(new_leader_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
 
     start_heartbeat(MY_IP, COMMUNICATION_PORT, LISTENER_PORT)
 
@@ -90,9 +104,12 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 
                 new_ring_members_message = f"RING_MEMBERS: {ring_members}"
                 client_list_message = f"CLIENT_LIST: {client_list}"
+                new_leader_message = f"NEW_LEADER: {leader}"
                 time.sleep(1)  # Warte 1 Sekunde vor dem ersten Broadcast
                 broadcast_socket.sendto(new_ring_members_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
                 broadcast_socket.sendto(client_list_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
+                
+                broadcast_socket.sendto(new_leader_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
             elif "DISCOVER_BY_CLIENT" in data.decode().strip():
                 response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}, {ring_members}"
                 broadcast_socket.sendto(response_message.encode(), address)
@@ -122,7 +139,7 @@ def passive_mode(BROADCAST_PORT, MY_IP, COMMUNICATION_PORT, LISTENER_PORT):
     Der Server läuft im passiven Modus und lauscht nur auf Broadcast-Nachrichten.
     """
     BUFFER_SIZE = 1024
-    global ring_members  # Greife auf die globale Variable zu
+    global ring_members, leader  # Greife auf die globale Variable zu
 
     # Broadcast-Socket erstellen
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -142,6 +159,7 @@ def passive_mode(BROADCAST_PORT, MY_IP, COMMUNICATION_PORT, LISTENER_PORT):
         try:
             data, address = broadcast_socket.recvfrom(BUFFER_SIZE)
             print(f"Broadcast-Nachricht empfangen: {data.decode()} von {address}")
+
             broadcast_msg = data.decode()
 
             if "RING_MEMBERS" in broadcast_msg:
@@ -152,6 +170,11 @@ def passive_mode(BROADCAST_PORT, MY_IP, COMMUNICATION_PORT, LISTENER_PORT):
                     # Konvertiere den String in eine Liste
                     ring_members_array = eval(array_string)
                     ring_members = ring_members_array
+
+            elif "NEW_LEADER" in broadcast_msg:
+                # Antwort vom aktiven Server
+                leader = f"{address[0]}:{data.decode().split(' ')[1].split(':')[1]}"
+                print(f"Aktiver Server (Leader) ist: {leader}")
 
         except socket.timeout:
             pass  # Keine Broadcast-Nachricht empfangen
@@ -211,7 +234,7 @@ def start_server():
     print(f"Server startet auf {MY_IP}... und Port {COMMUNICATION_PORT}")
 
     # Startet die Überwachung der Heartbeats
-    start_heartbeat_monitor(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT)
+    start_heartbeat_monitor(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT)
 
     # Nach bestehendem Server suchen
     existing_server = discover_existing_server(BROADCAST_PORT, COMMUNICATION_PORT)
@@ -262,7 +285,7 @@ def listen_for_heartbeat(LISTENER_PORT):
 
     # Socket für Heartbeat-Kommunikation erstellen
     listener_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    #listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Port-Wiederverwendung erlauben
+    listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Port-Wiederverwendung erlauben
     listener_socket.bind(('', LISTENER_PORT))
 
     while True:
@@ -286,21 +309,25 @@ def start_heartbeat(MY_IP, COMMUNICATION_PORT, LISTENER_PORT):
     """
     Startet die Heartbeat-Sender- und Listener-Threads.
     """
+    global listener_thread
+
     # Heartbeat-Sender starten
     sender_thread = threading.Thread(target=send_heartbeat, args=(MY_IP, COMMUNICATION_PORT))
-    sender_thread.daemon = True  # Beendet den Thread automatisch beim Beenden des Hauptprogramms
+    sender_thread.daemon = True
     sender_thread.start()
 
-    # Heartbeat-Listener starten
-    listener_thread = threading.Thread(target=listen_for_heartbeat, args=(LISTENER_PORT,))
-    listener_thread.daemon = True
-    listener_thread.start()
+    # Heartbeat-Listener nur starten, wenn er nicht bereits läuft
+    if not listener_thread or not listener_thread.is_alive():
+        listener_thread = threading.Thread(target=listen_for_heartbeat, args=(LISTENER_PORT,))
+        listener_thread.daemon = True
+        listener_thread.start()
 
-def monitor_heartbeats(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, timeout=10):
+
+def monitor_heartbeats(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT, timeout=10):
     """
     Überwacht Heartbeats des aktuellen Nachbarn und entfernt ihn bei Timeout.
     """
-    global ring_members, last_heartbeat
+    global ring_members, last_heartbeat, leader
 
     while True:
         current_time = time.time()
@@ -319,6 +346,9 @@ def monitor_heartbeats(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, timeout=10):
                 updated_ring_message = f"RING_MEMBERS: {ring_members}"
                 send_broadcast(updated_ring_message, BROADCAST_PORT)
                 print(f"Broadcast mit aktualisierter Ringliste gesendet: {ring_members}")
+
+                if current_neighbour == leader:
+                    active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT)
 
         time.sleep(2)  # Alle 5 Sekunden prüfen
 
@@ -343,11 +373,11 @@ def send_broadcast(message, BROADCAST_PORT):
 
 
 
-def start_heartbeat_monitor(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT):
+def start_heartbeat_monitor(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT):
     """
     Startet die Überwachung der Heartbeats.
     """
-    monitor_thread = threading.Thread(target=monitor_heartbeats, args=(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT))
+    monitor_thread = threading.Thread(target=monitor_heartbeats, args=(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT))
     monitor_thread.daemon = True
     monitor_thread.start()
 
