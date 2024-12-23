@@ -1,3 +1,4 @@
+import json
 import socket
 import random
 import time
@@ -131,7 +132,9 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
             response_message = "Hello, Client!"
             server_socket.sendto(response_message.encode(), address)
 
-            broadcast_socket.sendto(data, (get_broadcast_address(), CLIENT_BROADCAST_PORT))
+            broadcast_back = f"message: {data.decode()}, sender: {address}"
+            broadcast_back_json = broadcast_back.encode()
+            broadcast_socket.sendto(broadcast_back_json, (get_broadcast_address(), CLIENT_BROADCAST_PORT))
 
             
         except socket.timeout:

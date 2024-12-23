@@ -4,6 +4,15 @@ import socket
 import struct
 import threading
 
+def get_local_ip():
+    """
+    Ermittelt die lokale IP-Adresse des Geräts.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        # Verbindung zu einer externen Adresse simulieren
+        s.connect(("8.8.8.8", 80))  # Google-DNS-Server als Ziel
+        return s.getsockname()[0]
+
 def get_broadcast_address():
     """
     Ermittelt die Broadcast-Adresse basierend auf der lokalen IP-Adresse und Subnetzmaske.
@@ -64,7 +73,17 @@ def listen_for_broadcast(client_broadcast_port):
     while True:
         try:
             data, addr = broadcast_socket.recvfrom(1024)
+
+            print(data.decode().split("sender: ")[1].strip().replace('"',''))
+            print(f"('{get_local_ip()}', {COMMUNICATION_PORT})")
+
+            if data.decode().split("sender: ")[1].strip().replace('"','') == (f"('{get_local_ip()}', {COMMUNICATION_PORT})"):
+                
+                continue
+
             print(f"Broadcast-Nachricht von {addr}: {data.decode()}")
+
+            
         except Exception as e:
             print(f"Fehler beim Empfangen der Broadcast-Nachricht: {e}")
 
@@ -74,6 +93,9 @@ client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 BROADCAST_PORT = 5973  # Vom Server gesendet
 CLIENT_BROADCAST_PORT = 5974  # Client lauscht auf diesem Port
 COMMUNICATION_PORT = random.randint(10000, 11000)
+
+# Binde den Client-Socket explizit an den COMMUNICATION_PORT
+client_socket.bind(("", COMMUNICATION_PORT))
 buffer_size = 1024
 client_socket.settimeout(5)
 
@@ -82,7 +104,7 @@ listener_thread = threading.Thread(target=listen_for_broadcast, args=(CLIENT_BRO
 listener_thread.daemon = True
 listener_thread.start()
 
-print("Type 'exit' to close the client.")
+print(f"Type 'exit' to close the client. {COMMUNICATION_PORT}")
 
 try:
     try:
