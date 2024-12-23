@@ -4,6 +4,9 @@ import socket
 import struct
 import threading
 
+server_ip = ""
+server_communication_port = -1
+
 def get_local_ip():
     """
     Ermittelt die lokale IP-Adresse des Geräts.
@@ -63,6 +66,9 @@ def listen_for_broadcast(client_broadcast_port):
     """
     Lauscht auf Broadcast-Nachrichten vom Netzwerk.
     """
+
+    global server_ip, server_communication_port
+
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -74,14 +80,27 @@ def listen_for_broadcast(client_broadcast_port):
         try:
             data, addr = broadcast_socket.recvfrom(1024)
 
-            print(data.decode().split("sender: ")[1].strip().replace('"',''))
-            print(f"('{get_local_ip()}', {COMMUNICATION_PORT})")
+            if "sender" in data.decode():
+                print(data.decode().split("sender: ")[1].strip().replace('"',''))
+                print(f"('{get_local_ip()}', {COMMUNICATION_PORT})")
 
-            if data.decode().split("sender: ")[1].strip().replace('"','') == (f"('{get_local_ip()}', {COMMUNICATION_PORT})"):
-                
-                continue
+                if data.decode().split("sender: ")[1].strip().replace('"','') == (f"('{get_local_ip()}', {COMMUNICATION_PORT})"):
+                    
+                    continue
 
-            print(f"Broadcast-Nachricht von {addr}: {data.decode()}")
+                print(f"Broadcast-Nachricht von {addr}: {data.decode()}")
+            elif "NEW_LEADER" in data.decode():
+                print(f"Broadcast-Nachricht von {addr}: {data.decode()}")
+
+                server_ip = addr[0]
+        
+
+                match = re.search(r"NEW_LEADER: \d{1,3}(?:\.\d{1,3}){3}:(\d+)", data.decode())
+                if match:
+                    server_communication_port  = match.group(1)
+                    print("Extrahierter Port:", server_communication_port )
+                else:
+                    print("Port nicht gefunden")
 
             
         except Exception as e:

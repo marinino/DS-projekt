@@ -87,8 +87,8 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
     time.sleep(1)  # Warte 1 Sekunde vor dem ersten Broadcast
     broadcast_socket.sendto(new_ring_members_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
     broadcast_socket.sendto(client_list_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
-    
     broadcast_socket.sendto(new_leader_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
+    broadcast_socket.sendto(new_leader_message.encode(), (get_broadcast_address(), 5974))
 
     start_heartbeat(MY_IP, COMMUNICATION_PORT, LISTENER_PORT)
 
