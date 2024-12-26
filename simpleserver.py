@@ -9,6 +9,7 @@ import re
 ring_members = []
 last_heartbeat = {}  # Speichert den letzten Heartbeat-Zeitstempel für jeden Nachbarn
 client_list = []
+groups = {}
 leader = None
 listener_thread = None
 CLIENT_BROADCAST_PORT = 5974
@@ -129,12 +130,59 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
             server_socket.settimeout(0.5)
             data, address = server_socket.recvfrom(BUFFER_SIZE)
             print(f"Direkte Nachricht von {address}: {data.decode()}")
-            response_message = "Hello, Client!"
-            server_socket.sendto(response_message.encode(), address)
 
-            broadcast_back = f"message: {data.decode()}, sender: {address}"
-            broadcast_back_json = broadcast_back.encode()
-            broadcast_socket.sendto(broadcast_back_json, (get_broadcast_address(), CLIENT_BROADCAST_PORT))
+            if "GROUP_REG" in data.decode():
+                print("Received group registration")
+
+                groupname = data.decode().split(":")[1]
+                clientdata = data.decode().split(":")[2]
+
+                if groupname not in groups:
+                    print("Neue Gruppe erstellt")
+                    groups[groupname] = []
+
+                    response_message = f"Group {groupname} created!"
+                    server_socket.sendto(response_message.encode(), address)
+
+                if clientdata not in groups[groupname]:
+                    groups[groupname].append(address)
+
+                    response_message = f"Member {clientdata} has been added to group {groupname}"
+                    server_socket.sendto(response_message.encode(), address)
+                
+                print(groups)
+                
+
+            else:
+                '''
+                Broadcasten für an alle Clients unabhängig von Gruppen
+
+                response_message = "Hello, Client!"
+                server_socket.sendto(response_message.encode(), address)
+
+                broadcast_back = f"message: {data.decode()}, sender: {address}"
+                broadcast_back_json = broadcast_back.encode()
+                broadcast_socket.sendto(broadcast_back_json, (get_broadcast_address(), CLIENT_BROADCAST_PORT))
+                '''
+                
+                sender_groups = []
+                message_to_forward = data.decode()
+
+                for group_name, members in groups.items():
+                    print(members)
+                    print(address[0], address[1])
+                    if (address[0], address[1]) in members:
+                        sender_groups.append(group_name)
+                
+                print('SENDER GROUPS', sender_groups)
+
+                for group in sender_groups:
+                    print("GROUP", groups[group])
+                    for member in groups[group]:
+                        print("MEMBER", member)
+                        time.sleep(1)
+                        server_socket.sendto(message_to_forward.encode(), member)
+                        
 
             
         except socket.timeout:
@@ -145,7 +193,7 @@ def passive_mode(BROADCAST_PORT, MY_IP, COMMUNICATION_PORT, LISTENER_PORT):
     Der Server läuft im passiven Modus und lauscht nur auf Broadcast-Nachrichten.
     """
     BUFFER_SIZE = 1024
-    global ring_members, leader  # Greife auf die globale Variable zu
+    global ring_members, leader, client_list  # Greife auf die globale Variable zu
 
     # Broadcast-Socket erstellen
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -181,6 +229,14 @@ def passive_mode(BROADCAST_PORT, MY_IP, COMMUNICATION_PORT, LISTENER_PORT):
                 # Antwort vom aktiven Server
                 leader = f"{address[0]}:{data.decode().split(' ')[1].split(':')[1]}"
                 print(f"Aktiver Server (Leader) ist: {leader}")
+
+            elif "CLIENT_LIST" in broadcast_msg:
+                match = re.search(r"\[.*\]", broadcast_msg)
+                if match:
+                    array_string = match.group()  # Enthält den Inhalt der eckigen Klammern als String
+                    # Konvertiere den String in eine Liste
+                    ring_members_array = eval(array_string)
+                    client_list = ring_members_array
 
         except socket.timeout:
             pass  # Keine Broadcast-Nachricht empfangen

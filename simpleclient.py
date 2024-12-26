@@ -60,6 +60,22 @@ def discover_existing_server(broadcast_port, communication_port, timeout=2):
     except socket.timeout:
         print("Keine Antwort von bestehenden Servern erhalten.")
         return None  # Kein Server gefunden
+    
+def listen_for_direct_messages():
+    """
+    Lauscht auf direkte Nachrichten vom Server.
+    """
+    while True:
+        try:
+            data, addr = client_socket.recvfrom(buffer_size)
+            print(f"Direkte Nachricht von {addr}: {data.decode()}")
+        except socket.timeout:
+            # Kein Timeout-Fehler erforderlich, einfach weiterhören
+            pass
+        except Exception as e:
+            print(f"Fehler beim Empfang direkter Nachrichten: {e}")
+            break
+
 
 
 def listen_for_broadcast(client_broadcast_port):
@@ -81,9 +97,6 @@ def listen_for_broadcast(client_broadcast_port):
             data, addr = broadcast_socket.recvfrom(1024)
 
             if "sender" in data.decode():
-                print(data.decode().split("sender: ")[1].strip().replace('"',''))
-                print(f"('{get_local_ip()}', {COMMUNICATION_PORT})")
-
                 if data.decode().split("sender: ")[1].strip().replace('"','') == (f"('{get_local_ip()}', {COMMUNICATION_PORT})"):
                     
                     continue
@@ -123,6 +136,12 @@ listener_thread = threading.Thread(target=listen_for_broadcast, args=(CLIENT_BRO
 listener_thread.daemon = True
 listener_thread.start()
 
+# Start Direct Message-Listener in einem separaten Thread
+direct_message_thread = threading.Thread(target=listen_for_direct_messages)
+direct_message_thread.daemon = True
+direct_message_thread.start()
+
+
 print(f"Type 'exit' to close the client. {COMMUNICATION_PORT}")
 
 try:
@@ -135,22 +154,24 @@ try:
     # Interact with the discovered server
     while True:
 
-        server_ip = addr[0]
-        
-
-        match = re.search(r"SERVER_RESPONSE:\d{1,3}(?:\.\d{1,3}){3}:(\d+)", data.decode())
-        if match:
-            server_communication_port  = match.group(1)
-            print("Extrahierter Port:", server_communication_port )
-        else:
-            print("Port nicht gefunden")
+        if "SERVER_RESPONSE" in data.decode():
+            server_ip = addr[0]
+            match = re.search(r"SERVER_RESPONSE:\d{1,3}(?:\.\d{1,3}){3}:(\d+)", data.decode())
+            if match:
+                server_communication_port  = match.group(1)
+                print("Extrahierter Port:", server_communication_port )
+            else:
+                print("Port nicht gefunden")
         # Input message from user
-        message = input('Please enter message: ')
+        message = input('Please enter message(For group registration use GROUP_REG groupname): ')
 
         # Exit condition
         if message.lower() == 'exit':
             print("Exiting client...")
             break
+
+        if "GROUP_REG" in message:
+            message = f'{message.split(" ")[0]}:{message.split(" ")[1]}:({get_local_ip()}, {COMMUNICATION_PORT})'
 
         # Send data to server
         client_socket.sendto(message.encode(), (server_ip, int(server_communication_port)))
