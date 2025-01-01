@@ -3,9 +3,14 @@ import re
 import socket
 import struct
 import threading
+import uuid
 
 server_ip = ""
 server_communication_port = -1
+uuid_mapping ={}
+
+def generate_uuid():
+    return str(uuid.uuid4())
 
 def get_local_ip():
     """
@@ -56,6 +61,7 @@ def discover_existing_server(broadcast_port, communication_port, timeout=2):
     try:
         data, addr = broadcast_socket.recvfrom(1024)
         print(f"Antwort von bestehendem Server erhalten: {data.decode()} von {addr}")
+        
         return data, addr  # Adresse des bestehenden Servers
     except socket.timeout:
         print("Keine Antwort von bestehenden Servern erhalten.")
@@ -114,6 +120,10 @@ def listen_for_broadcast(client_broadcast_port):
                     print("Extrahierter Port:", server_communication_port )
                 else:
                     print("Port nicht gefunden")
+            # Antwort auf PING
+            elif data.decode() == "PING":
+                print(f"Ping von {addr} erhalten. Sende PONG.")
+                broadcast_socket.sendto("PONG".encode(), addr)
 
             
         except Exception as e:
