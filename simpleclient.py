@@ -1,3 +1,5 @@
+import json
+from queue import PriorityQueue
 import random
 import re
 import socket
@@ -8,6 +10,9 @@ import uuid
 server_ip = ""
 server_communication_port = -1
 uuid_mapping ={}
+
+
+next_global_seq_no = 1  # Erwartete Sequenznummer
 
 def generate_uuid():
     return str(uuid.uuid4())
@@ -71,16 +76,54 @@ def listen_for_direct_messages():
     """
     Lauscht auf direkte Nachrichten vom Server.
     """
+
+    global next_global_seq_no
+
+    received_messages = set()
+    message_queue = PriorityQueue()  # Nachrichten in Warteschlange sortieren
+
     while True:
         try:
             data, addr = client_socket.recvfrom(buffer_size)
             print(f"Direkte Nachricht von {addr}: {data.decode()}")
+
+
+            
+            message = json.loads(data.decode())
+            seq_no = message["seq_no"]
+
+            if seq_no in received_messages:
+                print('Got double')
+                return  # Dubletten ignorieren
+
+            received_messages.add(seq_no)
+            print('Added to set of sequence numbers')
+
+            # Nachricht in die Warteschlange legen
+            message_queue.put((seq_no, message))
+            print('Added to queue')
+
+            # Nachrichten in der richtigen Reihenfolge verarbeiten
+            while not message_queue.empty():
+                print('ENTERED MESSAGE QUEUE')
+                seq, msg = message_queue.queue[0]  # Peeke die nächste Nachricht
+                if seq == next_global_seq_no:
+                    message_queue.get()  # Entferne die Nachricht aus der Queue
+                    print(f"Nachricht verarbeitet: {msg['content']}")
+                    next_global_seq_no += 1
+                else:
+                    break  # Warte auf die nächste Sequenznummer
         except socket.timeout:
             # Kein Timeout-Fehler erforderlich, einfach weiterhören
             pass
+        except json.JSONDecodeError:
+            # Antwort auf PING
+            if data.decode() == "PING":
+                print(f"Ping von {addr} erhalten. Sende PONG.")
+                client_socket.sendto("PONG".encode(), addr)
         except Exception as e:
             print(f"Fehler beim Empfang direkter Nachrichten: {e}")
-            break
+            pass
 
 
 
@@ -120,10 +163,7 @@ def listen_for_broadcast(client_broadcast_port):
                     print("Extrahierter Port:", server_communication_port )
                 else:
                     print("Port nicht gefunden")
-            # Antwort auf PING
-            elif data.decode() == "PING":
-                print(f"Ping von {addr} erhalten. Sende PONG.")
-                broadcast_socket.sendto("PONG".encode(), addr)
+            
 
             
         except Exception as e:
@@ -140,16 +180,19 @@ COMMUNICATION_PORT = random.randint(10000, 11000)
 client_socket.bind(("", COMMUNICATION_PORT))
 buffer_size = 1024
 client_socket.settimeout(5)
+client_socket.setblocking(True)
 
 # Start Broadcast-Listener in einem separaten Thread
 listener_thread = threading.Thread(target=listen_for_broadcast, args=(CLIENT_BROADCAST_PORT,))
 listener_thread.daemon = True
 listener_thread.start()
+print('THREAD GESTARTET')
 
 # Start Direct Message-Listener in einem separaten Thread
 direct_message_thread = threading.Thread(target=listen_for_direct_messages)
 direct_message_thread.daemon = True
 direct_message_thread.start()
+print('THREAD GESTARTET')
 
 
 print(f"Type 'exit' to close the client. {COMMUNICATION_PORT}")
@@ -183,18 +226,15 @@ try:
         if "GROUP_REG" in message:
             message = f'{message.split(" ")[0]}:{message.split(" ")[1]}:({get_local_ip()}, {COMMUNICATION_PORT})'
 
+        message_id = f"msg-{uuid.uuid4()}"  # Eindeutige ID für die Nachricht
+
         # Send data to server
-        client_socket.sendto(message.encode(), (server_ip, int(server_communication_port)))
+        client_socket.sendto(json.dumps({'content': message, 'message_id': message_id}).encode(), (server_ip, int(server_communication_port)))
         print('Sent to server:', message)
 
-        # Receive response from server
-        print('Waiting for response...')
-        try:
-            data, server = client_socket.recvfrom(buffer_size)
-            print('Received message from server:', data.decode())
-        except socket.timeout:
-            print("No response from server.")
+        
 
 finally:
     client_socket.close()
     print('Socket closed')
+

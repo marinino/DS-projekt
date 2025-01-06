@@ -22,6 +22,7 @@ participant = False  # Ob der Knoten ein Teilnehmer ist
 broadcast_socket = None
 communication_socket = None
 server_socket = None
+global_sequence_number = 0  # Globale Sequenznummer
 
 uuid_mapping = {}  # Format: {UUID: (IP, PORT)}
 
@@ -87,7 +88,7 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
     Der Server läuft im aktiven Modus, beantwortet Broadcasts und verarbeitet direkte Nachrichten.
     """
     BUFFER_SIZE = 1024
-    global ring_members, client_list, leader, CLIENT_BROADCAST_PORT, uuid_mapping, server_socket, broadcast_socket  # Greife auf die globale Variable zu
+    global ring_members, client_list, leader, CLIENT_BROADCAST_PORT, uuid_mapping, server_socket, broadcast_socket, global_sequence_number  # Greife auf die globale Variable zu
 
     # Broadcast-Socket erstellen
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -164,11 +165,13 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
             data, address = server_socket.recvfrom(BUFFER_SIZE)
             print(f"Direkte Nachricht von {address}: {data.decode()}")
 
-            if "GROUP_REG" in data.decode():
+            msg_content = json.loads(data.decode())
+
+            if "GROUP_REG" in msg_content['content']:
                 print("Received group registration")
 
-                groupname = data.decode().split(":")[1]
-                clientdata = data.decode().split(":")[2]
+                groupname = msg_content['content'].split(":")[1]
+                clientdata = msg_content['content'].split(":")[2]
 
                 if groupname not in groups:
                     print("Neue Gruppe erstellt")
@@ -181,6 +184,7 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                     groups[groupname].append(address)
 
                     response_message = f"Member {clientdata} has been added to group {groupname}"
+                    print('CORRECT ADDR', address)
                     server_socket.sendto(response_message.encode(), address)
                 
                 #print(groups)
@@ -199,7 +203,13 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 '''
                 
                 sender_groups = []
-                message_to_forward = data.decode()
+                message_to_forward = json.loads(data.decode())
+
+                global_sequence_number += 1
+                print(message_to_forward)
+
+                message_to_forward["seq_no"] = global_sequence_number
+                print(f"Leader: Sequenznummer {global_sequence_number} zugewiesen für Nachricht {message_to_forward}")
 
                 for group_name, members in groups.items():
                     #print(members)
@@ -213,10 +223,11 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                     for group in sender_groups:
                         #print("GROUP", groups[group])
                         for member in groups[group]:
-                            #print("MEMBER", member)
+                            print("MEMBER", member)
                             time.sleep(1)
                             if member != address:
-                                server_socket.sendto(message_to_forward.encode(), member)
+                                server_socket.sendto(json.dumps(message_to_forward).encode(), member)
+                                print('MSG FORWAREDED')
                 else:
                     response_message = "Hello, Client!"
                     server_socket.sendto(response_message.encode(), address)
@@ -531,9 +542,10 @@ def monitor_clients(BROADCAST_PORT):
                 client_address = uuid_mapping[client_uuid]
                 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 client_socket.settimeout(5)  # Warte maximal 5 Sekunden auf eine Antwort
+                print(client_address)
                 
                 # Sende den Ping
-                client_socket.sendto(ping_message.encode(), (client_address[0], CLIENT_BROADCAST_PORT))
+                client_socket.sendto(ping_message.encode(), (client_address))
                 print(f"Ping gesendet an {client_uuid} ({client_address})")
 
                 # Auf Antwort warten
