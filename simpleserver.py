@@ -22,7 +22,7 @@ participant = False  # Ob der Knoten ein Teilnehmer ist
 broadcast_socket = None
 communication_socket = None
 server_socket = None
-global_sequence_number = 0  # Globale Sequenznummer
+global_sequence_numbers = {'public': 0}  # Globale Sequenznummer
 
 uuid_mapping = {}  # Format: {UUID: (IP, PORT)}
 
@@ -49,6 +49,7 @@ def get_broadcast_address():
     # Berechne die Broadcast-Adresse
     broadcast_int = ip_int | ~mask_int
     broadcast_address = socket.inet_ntoa(struct.pack("!I", broadcast_int & 0xFFFFFFFF))
+    print('BROTKASTENADRESSE', broadcast_address)
     return broadcast_address
 
 
@@ -149,8 +150,8 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 new_uuid = generate_uuid()
                 uuid_mapping[new_uuid] = (address[0], int(data.decode().split(" ")[1]))
                 client_list.append(new_uuid)
-                response_message = f"SERVER_RESPONSE:{MY_IP}:{COMMUNICATION_PORT}, {ring_members}, {BROADCAST_PORT}"
-                broadcast_socket.sendto(response_message.encode(), address)
+                response_message = f"DISCOVER_SERVER_RESPONSE;{COMMUNICATION_PORT};{global_sequence_numbers['public']}"
+                broadcast_socket.sendto(response_message.encode(), (address[0], int(data.decode().split(" ")[1])))
                 print(f"Broadcast-Antwort gesendet an {address}: {response_message}")
 
                 client_list_message = f"CLIENT_LIST: {client_list}"
@@ -176,14 +177,15 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 if groupname not in groups:
                     print("Neue Gruppe erstellt")
                     groups[groupname] = []
+                    global_sequence_numbers[groupname] = 0
 
-                    response_message = f"Group {groupname} created!"
+                    response_message = f"GROUP_CREATED;{groupname}"
                     server_socket.sendto(response_message.encode(), address)
 
                 if clientdata not in groups[groupname]:
                     groups[groupname].append(address)
 
-                    response_message = f"Member {clientdata} has been added to group {groupname}"
+                    response_message = f"GROUP_MEMBER_ADDED;{global_sequence_numbers[groupname]};{groupname}"
                     print('CORRECT ADDR', address)
                     server_socket.sendto(response_message.encode(), address)
                 
@@ -205,11 +207,7 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 sender_groups = []
                 message_to_forward = json.loads(data.decode())
 
-                global_sequence_number += 1
-                print(message_to_forward)
-
-                message_to_forward["seq_no"] = global_sequence_number
-                print(f"Leader: Sequenznummer {global_sequence_number} zugewiesen für Nachricht {message_to_forward}")
+                
 
                 for group_name, members in groups.items():
                     #print(members)
@@ -222,6 +220,9 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                 if len(sender_groups) > 0:
                     for group in sender_groups:
                         #print("GROUP", groups[group])
+                        global_sequence_numbers[group] += 1
+                        message_to_forward['group'] = group
+                        message_to_forward["seq_no"] = global_sequence_numbers[group]
                         for member in groups[group]:
                             print("MEMBER", member)
                             time.sleep(1)
@@ -229,10 +230,18 @@ def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
                                 server_socket.sendto(json.dumps(message_to_forward).encode(), member)
                                 print('MSG FORWAREDED')
                 else:
-                    response_message = "Hello, Client!"
+                    global_sequence_numbers["public"] += 1
+                    print(message_to_forward)
+
+                    message_to_forward["seq_no"] = global_sequence_numbers["public"]
+                    message_to_forward["group"] = "public"
+                    message_to_forward["sender"] = address
+                    print(f"Leader: Sequenznummer {global_sequence_numbers['public']} zugewiesen für Nachricht {message_to_forward}")
+
+                    response_message = "Public message distributed"
                     server_socket.sendto(response_message.encode(), address)
 
-                    broadcast_back = f"message: {data.decode()}, sender: {address}"
+                    broadcast_back = json.dumps(message_to_forward)
                     broadcast_back_json = broadcast_back.encode()
                     broadcast_socket.sendto(broadcast_back_json, (get_broadcast_address(), CLIENT_BROADCAST_PORT))
                         
@@ -322,6 +331,8 @@ def get_local_ip():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         # Verbindung zu einem externen Server herstellen (keine tatsächlichen Daten werden gesendet)
         s.connect(("8.8.8.8", 80))  # Google DNS als Ziel
+        print("IT HURTS WHEN IP", s.getsockname()[0])
+
         return s.getsockname()[0]
     
 def get_neighbour(ring, member_uuid, direction):
@@ -416,7 +427,7 @@ def listen_for_direct_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCA
     # Socket für Heartbeat-Kommunikation erstellen
     listener_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Port-Wiederverwendung erlauben
-    listener_socket.bind(('', LISTENER_PORT))
+    listener_socket.bind((MY_IP, LISTENER_PORT))
 
     while True:
         try:
@@ -545,7 +556,7 @@ def monitor_clients(BROADCAST_PORT):
                 print(client_address)
                 
                 # Sende den Ping
-                client_socket.sendto(ping_message.encode(), (client_address))
+                client_socket.sendto(ping_message.encode(), (client_address[0], client_address[1]))
                 print(f"Ping gesendet an {client_uuid} ({client_address})")
 
                 # Auf Antwort warten
