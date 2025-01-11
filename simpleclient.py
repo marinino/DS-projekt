@@ -50,10 +50,6 @@ def listen_for_direct_messages():
     """
     global next_global_seq_no, server_communication_port, server_ip, client_socket, group_seq_nums
 
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client_socket.bind((get_local_ip(), COMMUNICATION_PORT))
-    client_socket.settimeout(5)
-    client_socket.setblocking(True)
 
     received_messages = set()
     message_queue = PriorityQueue()
@@ -146,13 +142,12 @@ def listen_for_broadcast(client_broadcast_port):
                 with lock:
                     server_ip = addr[0]
 
-                match = re.search(r"NEW_LEADER: \d{1,3}(?:\.\d{1,3}){3}:(\d+)", data.decode())
-                if match:
-                    with lock:
-                        server_communication_port = match.group(1)
-                    print("Extrahierter Port:", server_communication_port)
-                else:
-                    print("Port nicht gefunden")
+                
+                
+                with lock:
+                    server_communication_port = data.decode().split(";")[2]
+                print("Extrahierter Port:", server_communication_port)
+               
             else:
             
                 message = json.loads(data.decode())
@@ -200,6 +195,11 @@ broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 broadcast_socket.settimeout(2)
 
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+client_socket.bind((get_local_ip(), COMMUNICATION_PORT))
+client_socket.settimeout(5)
+client_socket.setblocking(True)
+
 buffer_size = 1024
 
 listener_thread = threading.Thread(target=listen_for_broadcast, args=(CLIENT_BROADCAST_PORT,))
@@ -216,7 +216,7 @@ print(f"Type 'exit' to close the client. {COMMUNICATION_PORT}")
 
 try:
     try:
-        broadcast_message = f"DISCOVER_BY_CLIENT {COMMUNICATION_PORT}"
+        broadcast_message = f"DISCOVER_BY_CLIENT;{COMMUNICATION_PORT}"
         broadcast_address = get_broadcast_address()
         broadcast_socket.sendto(broadcast_message.encode(), (broadcast_address, BROADCAST_PORT))
         print(f"Broadcast gesendet: {broadcast_message}")
@@ -238,7 +238,8 @@ try:
         message_id = f"msg-{uuid.uuid4()}"
 
         with lock:
-            client_socket.sendto(json.dumps({'content': message, 'message_id': message_id}).encode(), (server_ip, int(server_communication_port)))
+            client_socket.sendto(json.dumps({'content': message, 'message_id': message_id}).encode(), (server_ip, int(server_communication_port) + 1))
+            print("MESSAGE SENT TO:", (server_ip, int(server_communication_port)))
 
             if "GROUP_REG" not in message:
                 if len(group_seq_nums.keys()) == 1:
