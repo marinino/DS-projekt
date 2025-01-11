@@ -144,6 +144,8 @@ def get_neighbour(ring, member_uuid, direction):
 
     global ring_members, uuid_mapping
 
+    print(member_uuid)
+
     current_node_index = ring_members.index(member_uuid) if member_uuid in ring_members else -1
     if current_node_index != -1:
         if direction == 'left':
@@ -308,16 +310,16 @@ def listen_for_direct_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCA
                         message_to_forward["group"] = "public"
                         message_to_forward["sender"] = address
                         print(f"Leader: Sequenznummer {global_sequence_numbers['public']} zugewiesen für Nachricht {message_to_forward}")
+                        if f"{MY_IP}:{COMMUNICATION_PORT}" == leader:
+                            new_global_seq_nums_msg = f"SEQ_NUMBERS;{global_sequence_numbers};{COMMUNICATION_PORT}"
+                            broadcast_socket.sendto(new_global_seq_nums_msg.encode(), (get_broadcast_address(), int(BROADCAST_PORT)))
 
-                        new_global_seq_nums_msg = f"SEQ_NUMBERS;{global_sequence_numbers};{COMMUNICATION_PORT}"
-                        broadcast_socket.sendto(new_global_seq_nums_msg.encode(), (get_broadcast_address(), int(BROADCAST_PORT)))
+                            response_message = "Public message distributed"
+                            server_socket.sendto(response_message.encode(), address)
 
-                        response_message = "Public message distributed"
-                        server_socket.sendto(response_message.encode(), address)
-
-                        broadcast_back = json.dumps(message_to_forward)
-                        broadcast_back_json = broadcast_back.encode()
-                        broadcast_socket.sendto(broadcast_back_json, (get_broadcast_address(), CLIENT_BROADCAST_PORT))
+                            broadcast_back = json.dumps(message_to_forward)
+                            broadcast_back_json = broadcast_back.encode()
+                            broadcast_socket.sendto(broadcast_back_json, (get_broadcast_address(), CLIENT_BROADCAST_PORT))
                 
             except json.JSONDecodeError:
                 if message.startswith("HEARTBEAT"):
@@ -356,7 +358,7 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
                 print('OWN BROADCAST')
             else:
                 print(communication_port_sender, data.decode())
-                if data.decode().startswith("DISCOVER_SERVER"):
+                if data.decode().startswith("DISCOVER_SERVER") and f"{MY_IP}:{COMMUNICATION_PORT}" == leader:
                     new_uuid = generate_uuid()
                     uuid_mapping[new_uuid] = (address[0], int(data.decode().split(';')[1]))
                     ring_members.append(new_uuid)
@@ -378,7 +380,7 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
                     broadcast_socket.sendto(uuid_mapping_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
                     broadcast_socket.sendto(groups_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
                     broadcast_socket.sendto(new_leader_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
-                elif data.decode().startswith("DISCOVER_BY_CLIENT"):
+                elif data.decode().startswith("DISCOVER_BY_CLIENT") and f"{MY_IP}:{COMMUNICATION_PORT}" == leader:
                     new_uuid = generate_uuid()
                     uuid_mapping[new_uuid] = (address[0], int(data.decode().split(";")[1]))
                     client_list.append(new_uuid)
