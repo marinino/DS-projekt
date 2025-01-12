@@ -51,7 +51,7 @@ def get_broadcast_address():
     # Berechne die Broadcast-Adresse
     broadcast_int = ip_int | ~mask_int
     broadcast_address = socket.inet_ntoa(struct.pack("!I", broadcast_int & 0xFFFFFFFF))
-    print('BROTKASTENADRESSE', broadcast_address)
+    #print('BROTKASTENADRESSE', broadcast_address)
     return broadcast_address
 
 
@@ -71,14 +71,12 @@ def discover_existing_server(broadcast_port, communication_port, timeout=2):
     # Berechne die richtige Broadcast-Adresse
     broadcast_address = get_broadcast_address()
     discovery_socket.sendto(broadcast_message.encode(), (broadcast_address, broadcast_port))
-    print(f"Broadcast gesendet: {broadcast_message}")
+    #print(f"Broadcast gesendet: {broadcast_message}")
 
     try:
         data, addr = discovery_socket.recvfrom(1024)
-        print('TEST', data.decode().split(';')[-1], communication_port, int(data.decode().split(';')[-1]) == int(communication_port))
-        if int(data.decode().split(';')[-1]) == int(communication_port):
-            print('OWN ANSWER')
-        else:
+        #print('TEST', data.decode().split(';')[-1], communication_port, int(data.decode().split(';')[-1]) == int(communication_port))
+        if int(data.decode().split(';')[-1]) != int(communication_port):
             print(f"Antwort von bestehendem Server erhalten: {data.decode()} von {addr}")
             self_uuid = data.decode().split(";")[1]
             #print(data.decode().split(";")[2])
@@ -136,7 +134,7 @@ def get_local_ip():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         # Verbindung zu einem externen Server herstellen (keine tatsächlichen Daten werden gesendet)
         s.connect(("8.8.8.8", 80))  # Google DNS als Ziel
-        print("IT HURTS WHEN IP", s.getsockname()[0])
+        #print("IT HURTS WHEN IP", s.getsockname()[0])
 
         return s.getsockname()[0]
     
@@ -144,7 +142,7 @@ def get_neighbour(ring, member_uuid, direction):
 
     global ring_members, uuid_mapping
 
-    print(member_uuid)
+    #print(member_uuid)
 
     current_node_index = ring_members.index(member_uuid) if member_uuid in ring_members else -1
     if current_node_index != -1:
@@ -249,7 +247,7 @@ def listen_for_direct_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCA
             data, address = listener_socket.recvfrom(BUFFER_SIZE)
             message = data.decode()
             print(f"Direkte Nachricht von {address}: {data.decode()}")
-            print("DIREKTNACHRICHT IST DA")
+            #print("DIREKTNACHRICHT IST DA")
 
             try:
                 msg_content = json.loads(message)
@@ -272,7 +270,7 @@ def listen_for_direct_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCA
                         groups[groupname].append(address)
 
                         response_message = f"GROUP_MEMBER_ADDED;{global_sequence_numbers[groupname]};{groupname}"
-                        print('CORRECT ADDR', address)
+                        #print('CORRECT ADDR', address)
                         server_socket.sendto(response_message.encode(), address)
                     
                     #print(groups)
@@ -289,6 +287,7 @@ def listen_for_direct_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCA
                             sender_groups.append(group_name)
                     
                     #print('SENDER GROUPS', sender_groups)
+                    server_socket.sendto(f'ACK;{message_to_forward["message_id"]}'.encode(), address)
 
                     if len(sender_groups) > 0:
                         for group in sender_groups:
@@ -297,14 +296,14 @@ def listen_for_direct_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCA
                             message_to_forward['group'] = group
                             message_to_forward["seq_no"] = global_sequence_numbers[group]
                             for member in groups[group]:
-                                print("MEMBER", member)
+                                #print("MEMBER", member)
                                 time.sleep(1)
                                 if member != address:
                                     server_socket.sendto(json.dumps(message_to_forward).encode(), member)
-                                    print('MSG FORWAREDED')
+                                    #print('MSG FORWAREDED')
                     else:
                         global_sequence_numbers["public"] += 1
-                        print(message_to_forward)
+                        #print(message_to_forward)
 
                         message_to_forward["seq_no"] = global_sequence_numbers["public"]
                         message_to_forward["group"] = "public"
@@ -314,7 +313,7 @@ def listen_for_direct_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCA
                             new_global_seq_nums_msg = f"SEQ_NUMBERS;{global_sequence_numbers};{COMMUNICATION_PORT}"
                             broadcast_socket.sendto(new_global_seq_nums_msg.encode(), (get_broadcast_address(), int(BROADCAST_PORT)))
 
-                            response_message = "Public message distributed"
+                            response_message = f"ACK;{message_to_forward['message_id']}"
                             server_socket.sendto(response_message.encode(), address)
 
                             broadcast_back = json.dumps(message_to_forward)
@@ -353,11 +352,11 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
             broadcast_socket.settimeout(0.5)
             data, address = broadcast_socket.recvfrom(BUFFER_SIZE)
 
+            print('LEADER', leader)
+
             communication_port_sender = data.decode().split(';')[-1]
-            if int(communication_port_sender) == int(COMMUNICATION_PORT):
-                print('OWN BROADCAST')
-            else:
-                print(communication_port_sender, data.decode())
+            if int(communication_port_sender) != int(COMMUNICATION_PORT):
+                #print(communication_port_sender, data.decode())
                 if data.decode().startswith("DISCOVER_SERVER") and f"{MY_IP}:{COMMUNICATION_PORT}" == leader:
                     new_uuid = generate_uuid()
                     uuid_mapping[new_uuid] = (address[0], int(data.decode().split(';')[1]))
@@ -390,6 +389,8 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
 
                     client_list_message = f"CLIENT_LIST;{client_list};{COMMUNICATION_PORT}"
                     broadcast_socket.sendto(client_list_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
+                    new_uuid_message = f"NEW_UUID_MAPPING;{uuid_mapping};{COMMUNICATION_PORT}"
+                    broadcast_socket.sendto(new_uuid_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
                 elif data.decode().startswith("RING_MEMBERS"):
 
                     
@@ -411,7 +412,7 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
                         client_list = ring_members_array
                 
                 elif data.decode().startswith("NEW_UUID_MAPPING"):
-                    print('GOT NEW UUID MAPPING')
+                    #print('GOT NEW UUID MAPPING')
                     uuid_mapping = ast.literal_eval(data.decode().split(";")[1])
 
                 elif data.decode().startswith("GROUPS"):
@@ -420,7 +421,7 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
                     start_heartbeat(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT)
                     start_heartbeat_monitor(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT)
                 elif data.decode().startswith("SEQ_NUMBERS;"): 
-                    print('GOT SEQUENCE NUMBER ARRAY')
+                    #print('GOT SEQUENCE NUMBER ARRAY')
 
                     global_sequence_numbers = ast.literal_eval(data.decode().split(';')[1])
             
@@ -468,12 +469,12 @@ def monitor_heartbeats(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT,
 
     while True:
         current_time = time.time()
-        #print("HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII")
+        ##print("HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII")
         # Ermittle den aktuellen Nachbarn
         current_neighbour_uuid = get_neighbour(ring_members, self_uuid, direction='right')
-        ##print('NACHBAR', current_neighbour_uuid, 'KNOTEN', self_uuid, 'RING MEMBER', ring_members)
-        print(current_neighbour_uuid)
-        print(str(uuid_mapping))
+        ###print('NACHBAR', current_neighbour_uuid, 'KNOTEN', self_uuid, 'RING MEMBER', ring_members)
+        #print(current_neighbour_uuid)
+        #print(str(uuid_mapping))
         current_neighbour = uuid_mapping[current_neighbour_uuid]
 
         # Überprüfe nur den aktuellen Nachbarn
@@ -548,7 +549,7 @@ def monitor_clients(BROADCAST_PORT, COMMUNICATION_PORT):
                 client_address = uuid_mapping[client_uuid]
                 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 client_socket.settimeout(5)  # Warte maximal 5 Sekunden auf eine Antwort
-                print(client_address)
+                #print(client_address)
                 
                 # Sende den Ping
                 client_socket.sendto(ping_message.encode(), (client_address[0], client_address[1]))
@@ -602,7 +603,7 @@ def send_message(message, neighbor):
     global uuid_mapping, communication_socket, server_socket
 
     neighbor_data = uuid_mapping[neighbor]
-    print(neighbor_data[0], neighbor_data[1], message)
+    #print(neighbor_data[0], neighbor_data[1], message)
 
 
     try:
@@ -633,29 +634,29 @@ def process_heartbeat(message, address):
 def process_election(message, address, BROADCAST_PORT, LISTENER_PORT, COMMUNICATION_PORT, MY_IP):
     global participant, leader
 
-    print('HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII')
+    #print('HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII')
     mid, flag = eval(message[1:])  # Parse der Nachricht
-    print(mid, flag)
+    #print(mid, flag)
     if flag == False:  # Wahl-Nachricht
         if mid < COMMUNICATION_PORT and not participant:
-            print('CASE 1')
+            #print('CASE 1')
             time.sleep(0.6)
             send_message(f"E({COMMUNICATION_PORT}, False)", get_neighbour(ring_members, self_uuid, "left"))
             participant = True
         elif mid > COMMUNICATION_PORT:
-            print('CASE 2')
+            #print('CASE 2')
             time.sleep(0.6)
             send_message(f"E({mid}, False)", get_neighbour(ring_members, self_uuid, "left"))
             participant = True
         elif mid == COMMUNICATION_PORT:
-            print('CASE 3')
+            #print('CASE 3')
             time.sleep(0.6)
             send_message(f"E({COMMUNICATION_PORT}, True)", get_neighbour(ring_members, self_uuid, "left"))
             participant = False
             active_mode_conversion(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT)
             
     elif flag == True:  # Leader-Ankündigung
-        leader = mid
+        leader = f"{get_local_ip()}:{mid}"
         print(f"Leader ist: {leader}")
         if mid != COMMUNICATION_PORT:
             time.sleep(0.6)
