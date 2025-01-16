@@ -352,7 +352,7 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
             broadcast_socket.settimeout(0.5)
             data, address = broadcast_socket.recvfrom(BUFFER_SIZE)
 
-            print('LEADER', leader)
+            #print('LEADER', leader)
 
             communication_port_sender = data.decode().split(';')[-1]
             if int(communication_port_sender) != int(COMMUNICATION_PORT):
