@@ -25,6 +25,7 @@ communication_socket = None
 server_socket = None
 global_sequence_numbers = {'public': 0}  # Globale Sequenznummer
 listener_socket = None
+stalled_from_election = False
 
 uuid_mapping = {}  # Format: {UUID: (IP, PORT)}
 
@@ -56,37 +57,59 @@ def get_broadcast_address():
 
 
 
-def discover_existing_server(broadcast_port, communication_port, timeout=2):
+def discover_existing_server(broadcast_port, communication_port, MY_IP, LISTENER_PORT, timeout=5):
     """
-    Sendet einen Broadcast, um nach existierenden Servern im Netzwerk zu suchen.
+    Sendet einen Broadcast, um nach existierenden Servern im Netzwerk zu suchen und wartet maximal `timeout` Sekunden auf eine Antwort.
     """
 
-    global self_uuid, uuid_mapping, ring_members
+    global stalled_from_election, self_uuid, uuid_mapping, ring_members, leader
 
     discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # Erlaube Broadcasts
-    discovery_socket.settimeout(timeout)
+    discovery_socket.settimeout(0.5)  # Kurzer Timeout für Schleifen-Iteration
 
     broadcast_message = f"DISCOVER_SERVER;{communication_port}"
-    # Berechne die richtige Broadcast-Adresse
     broadcast_address = get_broadcast_address()
+    print(broadcast_port)
     discovery_socket.sendto(broadcast_message.encode(), (broadcast_address, broadcast_port))
-    #print(f"Broadcast gesendet: {broadcast_message}")
 
-    try:
-        data, addr = discovery_socket.recvfrom(1024)
-        #print('TEST', data.decode().split(';')[-1], communication_port, int(data.decode().split(';')[-1]) == int(communication_port))
-        if int(data.decode().split(';')[-1]) != int(communication_port):
-            print(f"Antwort von bestehendem Server erhalten: {data.decode()} von {addr}")
-            self_uuid = data.decode().split(";")[1]
-            #print(data.decode().split(";")[2])
-            uuid_mapping = ast.literal_eval(data.decode().split(";")[2])
-            ring_members = eval(data.decode().split(";")[3])
-            #print("RING MEMBERS", ring_members, "UUID MAPPING", uuid_mapping)
-            return addr  # Adresse des bestehenden Servers
-    except socket.timeout:
-        print("Keine Antwort von bestehenden Servern erhalten.")
-        return None  # Kein Server gefunden
+    start_time = time.time()  # Startzeit speichern
+
+    while time.time() - start_time < timeout:  # Wartezeit begrenzen
+        try:
+            data, addr = discovery_socket.recvfrom(1024)
+
+            if int(data.decode().split(';')[-1]) != int(communication_port):
+                if data.decode().startswith("ANSWER_FROM_PASSIVE"):
+                    print('Passiver Server gefunden')
+                    stalled_from_election = True
+
+                    start_time2 = time.time()
+                    while time.time() - start_time2 < 30:
+                        if leader is not None:  # Falls ein Leader in der Zwischenzeit gefunden wurde, abbrechen
+                            print("Leader wurde gesetzt, Wechsel in passive Rolle.")
+                            #stalled_from_election = False
+                            break
+                        time.sleep(0.5)  # Warte 0.5 Sekunden, um CPU-Last zu vermeiden
+
+                    if leader is None:  # Falls nach 10 Sekunden immer noch kein Leader existiert, aktiver Server werden
+                        print("Kein Leader nach 10 Sekunden gefunden. Wechsel in aktiven Modus.", leader)
+                        active_mode_conversion(MY_IP, broadcast_port, communication_port, LISTENER_PORT)
+                        #stalled_from_election = False
+                else:
+
+                    self_uuid = data.decode().split(";")[1]
+                    uuid_mapping = ast.literal_eval(data.decode().split(";")[2])
+                    ring_members = eval(data.decode().split(";")[3])
+
+                print(f"Antwort von bestehendem Server erhalten: {data.decode()} von {addr}")
+                
+                return addr  # Server gefunden, also Adresse zurückgeben
+        except socket.timeout:
+            pass  # Falls kein Paket ankommt, einfach weiter versuchen
+
+    print("Keine Antwort von bestehenden Servern erhalten nach 3 Sekunden.")
+    return None  # Kein Server gefunden nach Ablauf des Timeouts
 
 def active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT):
     """
@@ -128,6 +151,10 @@ def passive_mode(BROADCAST_PORT, MY_IP, COMMUNICATION_PORT, LISTENER_PORT):
 
    
     print(f"Passiver Server hört auf Broadcast-Nachrichten auf Port {BROADCAST_PORT}")
+    start_heartbeat(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT)
+    start_heartbeat_monitor(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT)
+    start_listen_for_broadcast_message(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT)
+    start_listen_for_direct_message(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT)
 
 def get_local_ip():
     """Ermittelt die lokale IP-Adresse des Geräts."""
@@ -183,7 +210,7 @@ def start_server():
     start_listen_for_broadcast_message(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT)
 
     # Nach bestehendem Server suchen
-    existing_server = discover_existing_server(BROADCAST_PORT, COMMUNICATION_PORT)
+    existing_server = discover_existing_server(BROADCAST_PORT, COMMUNICATION_PORT, MY_IP, LISTENER_PORT)
     
     if existing_server:
         print(f"Bestehender Server gefunden bei {existing_server}. Wechsel in passiven Modus.") 
@@ -329,17 +356,20 @@ def listen_for_direct_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCA
 
             
         except socket.timeout:
-            pass
+            time.sleep(1)
 
         except Exception as e:
             print(f"Fehler beim Empfangen des Heartbeats: {e}")
+            time.sleep(1)
+
+   
 
 def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROADCAST_PORT):
     """
     Lauscht auf Heartbeat-Nachrichten von anderen Servern.
     """
     BUFFER_SIZE = 1024
-    global last_heartbeat, participant, broadcast_socket, uuid_mapping, ring_members, client_list, leader, groups, global_sequence_numbers, server_socket
+    global stalled_from_election, self_uuid, last_heartbeat, participant, broadcast_socket, uuid_mapping, ring_members, client_list, leader, groups, global_sequence_numbers, server_socket
 
     # Broadcast-Socket erstellen
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -353,11 +383,12 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
             data, address = broadcast_socket.recvfrom(BUFFER_SIZE)
 
             #print('LEADER', leader)
+            print('NEW BORADCAST', data.decode())
 
             communication_port_sender = data.decode().split(';')[-1]
             if int(communication_port_sender) != int(COMMUNICATION_PORT):
                 #print(communication_port_sender, data.decode())
-                if data.decode().startswith("DISCOVER_SERVER") and f"{MY_IP}:{COMMUNICATION_PORT}" == leader:
+                if data.decode().startswith("DISCOVER_SERVER") and f"{MY_IP}:{COMMUNICATION_PORT}" == leader  and not stalled_from_election:
                     new_uuid = generate_uuid()
                     uuid_mapping[new_uuid] = (address[0], int(data.decode().split(';')[1]))
                     ring_members.append(new_uuid)
@@ -379,7 +410,7 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
                     broadcast_socket.sendto(uuid_mapping_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
                     broadcast_socket.sendto(groups_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
                     broadcast_socket.sendto(new_leader_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
-                elif data.decode().startswith("DISCOVER_BY_CLIENT") and f"{MY_IP}:{COMMUNICATION_PORT}" == leader:
+                elif data.decode().startswith("DISCOVER_BY_CLIENT") and f"{MY_IP}:{COMMUNICATION_PORT}" == leader and not stalled_from_election:
                     new_uuid = generate_uuid()
                     uuid_mapping[new_uuid] = (address[0], int(data.decode().split(";")[1]))
                     client_list.append(new_uuid)
@@ -391,7 +422,7 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
                     broadcast_socket.sendto(client_list_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
                     new_uuid_message = f"NEW_UUID_MAPPING;{uuid_mapping};{COMMUNICATION_PORT}"
                     broadcast_socket.sendto(new_uuid_message.encode(), (get_broadcast_address(), BROADCAST_PORT))
-                elif data.decode().startswith("RING_MEMBERS"):
+                elif data.decode().startswith("RING_MEMBERS") and not stalled_from_election:
 
                     
                     ring_members_array = eval(data.decode().split(';')[1])
@@ -403,7 +434,38 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
                     leader = f"{address[0]}:{data.decode().split(';')[1].split(':')[1]}"
                     print(f"Aktiver Server (Leader) ist: {leader}")
 
-                elif data.decode().startswith("CLIENT_LIST"):
+                    if stalled_from_election:
+                        time.sleep(1)
+                        # Nach bestehendem Server suchen
+                        # Nach bestehendem Server suchen
+
+                        
+
+                        existing_server = discover_existing_server(BROADCAST_PORT, COMMUNICATION_PORT, MY_IP, LISTENER_PORT)
+                        
+                        if existing_server:
+                            print(f"Bestehender Server gefunden bei {existing_server}. Wechsel in passiven Modus.") 
+                            passive_mode(BROADCAST_PORT, MY_IP, COMMUNICATION_PORT, LISTENER_PORT)  # In passiven Modus wechseln
+                        else:
+                            print("Kein Server gefunden. Wechsel in aktiven Modus.")
+                            new_uuid = generate_uuid()
+                            self_uuid = new_uuid
+                            uuid_mapping[new_uuid] = (MY_IP, COMMUNICATION_PORT)
+                            ring_members.append(new_uuid)
+                            active_mode(MY_IP, BROADCAST_PORT, COMMUNICATION_PORT, LISTENER_PORT)
+
+                        stalled_from_election = False
+                        print('SET STALLED FROM ELECTION', stalled_from_election)
+                        start_listen_for_direct_message(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT)
+                        print('case 1')
+                        #start_listen_for_broadcast_message(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT)
+                        print('case 2')
+                        start_heartbeat_monitor(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT)
+                        print('case 3')
+                        while True:
+                            continue
+
+                elif data.decode().startswith("CLIENT_LIST") and not stalled_from_election:
                     match = re.search(r"\[.*\]", data.decode())
                     if match:
                         array_string = match.group()  # Enthält den Inhalt der eckigen Klammern als String
@@ -411,22 +473,34 @@ def listen_for_broadcast_messages(LISTENER_PORT, COMMUNICATION_PORT, MY_IP, BROA
                         ring_members_array = eval(array_string)
                         client_list = ring_members_array
                 
-                elif data.decode().startswith("NEW_UUID_MAPPING"):
+                elif data.decode().startswith("NEW_UUID_MAPPING") and not stalled_from_election:
                     #print('GOT NEW UUID MAPPING')
                     uuid_mapping = ast.literal_eval(data.decode().split(";")[1])
 
-                elif data.decode().startswith("GROUPS"):
+                elif data.decode().startswith("GROUPS") and not stalled_from_election:
                     groups = ast.literal_eval(data.decode().split(";")[1])
-
+                    print('FROM GROUPS')
                     start_heartbeat(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT)
                     start_heartbeat_monitor(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT)
-                elif data.decode().startswith("SEQ_NUMBERS;"): 
+                elif data.decode().startswith("SEQ_NUMBERS;") and not stalled_from_election: 
                     #print('GOT SEQUENCE NUMBER ARRAY')
 
                     global_sequence_numbers = ast.literal_eval(data.decode().split(';')[1])
-            
+                elif data.decode().startswith("DISCOVER_SERVER") and not stalled_from_election:
+                    def delayed_send():
+                        passive_server_response = f"ANSWER_FROM_PASSIVE;{COMMUNICATION_PORT}"
+                        broadcast_socket.sendto(passive_server_response.encode(), address)
+                        print('ONBHIBUVBUZBUBINIHBGUVUBOJNBUZHVUGB')
+
+                    # Starte einen Timer, der nach 2 Sekunden die Nachricht sendet
+                    timer = threading.Timer(2, delayed_send)
+                    timer.start()
+                else:
+                    print("GOT DIFFERENT MESSAGE", data.decode())
+
+                    
         except socket.timeout:
-            pass
+            time.sleep(1)
 
 def start_heartbeat(MY_IP, COMMUNICATION_PORT, LISTENER_PORT, BROADCAST_PORT):
     """
@@ -455,10 +529,11 @@ def start_listen_for_broadcast_message(MY_IP, COMMUNICATION_PORT, LISTENER_PORT,
     global broadcast_thread
 
     # Heartbeat-Listener nur starten, wenn er nicht bereits läuft
-    if not broadcast_thread or not broadcast_thread.is_alive():
-        broadcast_thread = threading.Thread(target=listen_for_broadcast_messages, args=(LISTENER_PORT,COMMUNICATION_PORT, MY_IP, BROADCAST_PORT))
-        broadcast_thread.daemon = True
-        broadcast_thread.start()
+    #if not broadcast_thread or not broadcast_thread.is_alive():
+    print('STARTED BROADCAST LISTENER')
+    broadcast_thread = threading.Thread(target=listen_for_broadcast_messages, args=(LISTENER_PORT,COMMUNICATION_PORT, MY_IP, BROADCAST_PORT))
+    broadcast_thread.daemon = True
+    broadcast_thread.start()
 
 
 def monitor_heartbeats(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT, timeout=20):
@@ -467,16 +542,18 @@ def monitor_heartbeats(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT,
     """
     global ring_members, last_heartbeat, leader, self_uuid, uuid_mapping
 
+    not_found_counter = 0
+
     while True:
         current_time = time.time()
-        ##print("HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII")
+        #print("HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII")
         # Ermittle den aktuellen Nachbarn
         current_neighbour_uuid = get_neighbour(ring_members, self_uuid, direction='right')
         ###print('NACHBAR', current_neighbour_uuid, 'KNOTEN', self_uuid, 'RING MEMBER', ring_members)
         #print(current_neighbour_uuid)
         #print(str(uuid_mapping))
         current_neighbour = uuid_mapping[current_neighbour_uuid]
-
+        #print(current_neighbour)
         # Überprüfe nur den aktuellen Nachbarn
         #print("CURRENNT_NEI", current_neighbour)
         #print(last_heartbeat)
@@ -496,6 +573,25 @@ def monitor_heartbeats(MY_IP, COMMUNICATION_PORT, BROADCAST_PORT, LISTENER_PORT,
 
                 if current_neighbour_compare_leader == leader:
                     start_election(COMMUNICATION_PORT)
+
+        else:
+            not_found_counter = not_found_counter + 1
+            if not_found_counter > 5:
+                print(f"Nachbar {current_neighbour} hat Timeout überschritten. Entferne aus Ring.")
+                ring_members.remove(current_neighbour_uuid)
+
+                # Sende die aktualisierte Ringliste per Broadcast
+                updated_ring_message = f"RING_MEMBERS;{ring_members};{COMMUNICATION_PORT}"
+                send_broadcast(updated_ring_message, BROADCAST_PORT)
+                print(f"Broadcast mit aktualisierter Ringliste gesendet: {ring_members}")
+
+                #print(current_neighbour, leader)
+                current_neighbour_compare_leader = f"{current_neighbour[0]}:{current_neighbour[1]}"
+
+                if current_neighbour_compare_leader == leader:
+                    start_election(COMMUNICATION_PORT)
+                not_found_counter = 0
+
 
         time.sleep(2)  # Alle 5 Sekunden prüfen
 
@@ -620,6 +716,7 @@ def start_election(port):
     send_message(f"E({port}, False)", get_neighbour(ring_members, self_uuid, "left"))
 
 def process_heartbeat(message, address):
+
     global last_heartbeat
     print(f"Heartbeat empfangen von {message.split(':')[1]}:{message.split(':')[2]}")
 
