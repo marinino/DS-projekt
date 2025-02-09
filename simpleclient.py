@@ -13,29 +13,29 @@ server_ip = ""
 server_communication_port = -1
 uuid_mapping = {}
 client_socket = None
-next_global_seq_no = 1  # Erwartete Sequenznummer
-lock = threading.Lock()  # Lock zur Synchronisation von Threads
+next_global_seq_no = 1  # Expected sequence number
+lock = threading.Lock()  # Locks for synch
 broadcast_socket = None
 group_seq_nums = {}
-message_queue_failed_messages = []  # Warteschlange für Nachrichten
+message_queue_failed_messages = []  # Queue for messages considered undelivered to master
 
 def generate_uuid():
     return str(uuid.uuid4())
 
 def get_local_ip():
     """
-    Ermittelt die lokale IP-Adresse des Geräts.
+    Gets IP of device
     """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.connect(("8.8.8.8", 80))  # Google-DNS-Server als Ziel
+        s.connect(("8.8.8.8", 80)) 
         return s.getsockname()[0]
 
 def get_broadcast_address():
     """
-    Ermittelt die Broadcast-Adresse basierend auf der lokalen IP-Adresse und Subnetzmaske.
+    Gets broadcast adress of network
     """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.connect(("8.8.8.8", 80))  # Google DNS als Ziel
+        s.connect(("8.8.8.8", 80))  
         local_ip = s.getsockname()[0]
 
     subnet_mask = "255.255.255.0"
@@ -48,7 +48,7 @@ def get_broadcast_address():
 
 def listen_for_direct_messages():
     """
-    Lauscht auf direkte Nachrichten vom Server.
+    Listens for direct messages 
     """
     global next_global_seq_no, server_communication_port, server_ip, client_socket, group_seq_nums, message_queue_failed_messages
 
@@ -59,13 +59,12 @@ def listen_for_direct_messages():
     while True:
         try:
             data, addr = client_socket.recvfrom(1024)
-            print(f"Direkte Nachricht von {addr}: {data.decode()}")
+            print(f"Direct message from {addr}: {data.decode()}")
 
             if data.decode().startswith("DISCOVER_SERVER_RESPONSE;"):
                 with lock:
                     server_ip = addr[0]
                     server_communication_port = data.decode().split(';')[1]
-                    #print('IM AM THE DEVIL')
                     group_seq_nums["public"] = int(data.decode().split(';')[2]) + 1
             elif data.decode().startswith('GROUP_MEMBER_ADDED;'):
 
@@ -74,7 +73,6 @@ def listen_for_direct_messages():
 
                 with lock:
                     group_seq_nums[groupname] = int(group_seq_num) + 1
-                    #print(group_seq_nums)
             elif data.decode() == 'Public message distributed': 
                 print('Public message was distributed')
             else:
@@ -85,32 +83,27 @@ def listen_for_direct_messages():
 
                 with lock:
                     if seq_no in received_messages:
-                        #print("Got double")
                         continue
 
                     received_messages.add(seq_no)
-                    #print("Added to set of sequence numbers")
 
                     message_queue.put((seq_no, message))
-                    #print("Added to queue")
 
                     while not message_queue.empty():
                         seq, msg = message_queue.queue[0]
                         if seq == group_seq_nums[group_of_message]:
                             message_queue.get()
-                            print(f"Nachricht verarbeitet: {msg['content']}")
+                            print(f"Message processed: {msg['content']}")
                             group_seq_nums[group_of_message] += 1
                         else:
-                            #print("EXPECTED SEQUENCE NUMBER:", group_seq_nums[group_of_message])
                             break
         except socket.timeout:
             pass
         except json.JSONDecodeError:
             if data.decode() == "PING":
-                print(f"Ping von {addr} erhalten. Sende PONG.")
+                print(f"Received ping from {addr}. Send PONG.")
                 client_socket.sendto("PONG".encode(), addr)
             elif data.decode().startswith('ACK;'):
-                ## FINISH ACK SHIT HANDLE REC ACK AND DELETE FROM LIST message_queue_failed_messages
                 msg_id = data.decode().split(';')[1]
                 for msg in message_queue_failed_messages:
                     msg_content = json.loads(msg)
@@ -118,12 +111,12 @@ def listen_for_direct_messages():
                         message_queue_failed_messages.remove(msg)
         except Exception as e:
             
-            print(f"Fehler beim Empfang direkter Nachrichten: {e}")
+            print(f"Error receiving direct messages: {e}")
 
 
 def listen_for_broadcast(client_broadcast_port):
     """
-    Lauscht auf Broadcast-Nachrichten vom Netzwerk.
+    Listens for broadcasts in the network
     """
     global server_ip, server_communication_port, broadcast_socket, group_seq_nums, message_queue_failed_messages, client_socket
 
@@ -145,9 +138,9 @@ def listen_for_broadcast(client_broadcast_port):
                 if data.decode().split("sender: ")[1].strip().replace('"', '') == (f"('{get_local_ip()}', {COMMUNICATION_PORT})"):
                     continue
 
-                print(f"Broadcast-Nachricht von {addr}: {data.decode()}")
+                print(f"Broadcast message from {addr}: {data.decode()}")
             elif "NEW_LEADER" in data.decode():
-                print(f"Broadcast-Nachricht von {addr}: {data.decode()}")
+                print(f"Broadcast message from {addr}: {data.decode()}")
 
                 with lock:
                     server_ip = addr[0]
@@ -156,7 +149,7 @@ def listen_for_broadcast(client_broadcast_port):
                 
                 with lock:
                     server_communication_port = data.decode().split(";")[2]
-                print("Extrahierter Port:", server_communication_port)
+                print("Extracted Port:", server_communication_port)
 
                 for message in message_queue_failed_messages:
                     time.sleep(0.1)
@@ -175,29 +168,23 @@ def listen_for_broadcast(client_broadcast_port):
 
                     with lock:
                         if seq_no in received_messages_broadcast:
-                            #print("Got double")
                             continue
 
                         received_messages_broadcast.add(seq_no)
-                        #print("Added to set of sequence numbers")
 
                         message_queue_broadcast.put((seq_no, message))
-                        #print("Added to queue")
 
-                        #print(str(message_queue_broadcast.queue[0]))
 
                         while not message_queue_broadcast.empty():
                             seq, msg = message_queue_broadcast.queue[0]
                             if seq == group_seq_nums[group_of_message]:
                                 message_queue_broadcast.get()
-                                print(f"Nachricht verarbeitet: {msg['content']}")
+                                print(f"Messages processed: {msg['content']}")
                                 group_seq_nums[group_of_message] += 1
-                                #print('UPDATED SEQ NUMS TO', group_seq_nums[group_of_message])
                             else:
-                                #print("EXPECTED SEQUENCE NUMBER:", group_seq_nums[group_of_message], seq, message['message_id'])
                                 break
         except Exception as e:
-            print(f"Fehler beim Empfangen der Broadcast-Nachricht: {e}")
+            print(f"Error receiving broadcast: {e}")
             traceback.print_exc()
 
 
@@ -219,12 +206,10 @@ buffer_size = 1024
 listener_thread = threading.Thread(target=listen_for_broadcast, args=(CLIENT_BROADCAST_PORT,))
 listener_thread.daemon = True
 listener_thread.start()
-#print("THREAD GESTARTET")
 
 direct_message_thread = threading.Thread(target=listen_for_direct_messages)
 direct_message_thread.daemon = True
 direct_message_thread.start()
-#print("THREAD GESTARTET")
 
 print(f"Type 'exit' to close the client. {COMMUNICATION_PORT}")
 
@@ -233,7 +218,7 @@ try:
         broadcast_message = f"DISCOVER_BY_CLIENT;{COMMUNICATION_PORT}"
         broadcast_address = get_broadcast_address()
         broadcast_socket.sendto(broadcast_message.encode(), (broadcast_address, BROADCAST_PORT))
-        print(f"Broadcast gesendet: {broadcast_message}")
+        print(f"Sent broadcast: {broadcast_message}")
     except socket.timeout:
         print("No response from server. Exiting client...")
         exit()
@@ -255,16 +240,13 @@ try:
 
             with lock:
                 client_socket.sendto(json.dumps({'content': message, 'message_id': message_id}).encode(), (server_ip, int(server_communication_port) + 1))
-                #print("MESSAGE SENT TO:", (server_ip, int(server_communication_port)))
 
                 if "GROUP_REG" not in message:
                     if len(group_seq_nums.keys()) == 1:
                         group_seq_nums["public"] += 1
-                        #print('UPDATED SEQ NUM IN PÜBLIC', group_seq_nums["public"])
                     else:
                         for group in group_seq_nums.keys():
                             if group != "public":
-                                #print('UPDATING AFTER SEND FOR GROUP', group)
                                 group_seq_nums[group] += 1
                 print("Sent to server:", message)
                 message_queue_failed_messages.append(json.dumps({'content': message, 'message_id': message_id}))
